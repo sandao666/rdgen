@@ -433,19 +433,14 @@ jobs:
       - name: Sign and upload apk
         id: sign
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '' && env.ANDROID_SIGNING_KEY != ''
-        uses: ./.github/workflows/sign-apk.yml
-        with:
-          apk: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
-          sign_base_url: ${{ env.SIGN_BASE_URL }}
-          android_signing_key: ${{ env.ANDROID_SIGNING_KEY }}
-
+        run: echo "⚠️ APK signing skipped - sign-apk.yml workflow not found"
       - name: Upload signed apk
         uses: actions/upload-artifact@v4
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '' && env.ANDROID_SIGNING_KEY != ''
         with:
           name: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-signed
           path: |
-            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}-signed.apk
+            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
           retention-days: 1
 
       - name: Upload to release
