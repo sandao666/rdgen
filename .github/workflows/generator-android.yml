@@ -62,26 +62,22 @@ on:
           - 'true'
           - 'false'
 
-
 env:
-  SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-  RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+  SCITER_RUST_VERSION: "1.75"
+  RUST_VERSION: "1.75"
   CARGO_NDK_VERSION: "3.1.2"
   SCITER_ARMV7_CMAKE_VERSION: "3.29.7"
   SCITER_NASM_DEBVERSION: "2.14-1"
   LLVM_VERSION: "15.0.6"
   FLUTTER_VERSION: "3.24.5"
   ANDROID_FLUTTER_VERSION: "3.24.5"
-  # for arm64 linux because official Dart SDK does not work
   FLUTTER_ELINUX_VERSION: "3.16.9"
   TAG_NAME: "${{ inputs.upload-tag }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # vcpkg version: 2024.07.12
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836"
   VERSION: "${{ fromJson(inputs.extras).version }}"
   NDK_VERSION: "r27c"
-  #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
   MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
   UPLOAD_ARTIFACT: 'true'
@@ -107,7 +103,6 @@ jobs:
               arch: aarch64,
               target: aarch64-linux-android,
               os: ubuntu-24.04,
-
               reltype: release,
               suffix: ""
             }
@@ -115,7 +110,6 @@ jobs:
               arch: armv7,
               target: armv7-linux-androideabi,
               os: ubuntu-24.04,
-
               reltype: release,
               suffix: ""
             }
@@ -123,7 +117,6 @@ jobs:
               arch: x86_64,
               target: x86_64-linux-android,
               os: ubuntu-24.04,
-
               reltype: release,
               suffix: ""
             }
@@ -131,7 +124,6 @@ jobs:
               arch: x86,
               target: i686-linux-android,
               os: ubuntu-24.04,
-
               reltype: release,
               suffix: ""
             }
@@ -208,7 +200,6 @@ jobs:
           cd $(dirname $(dirname $(which flutter)))
           [[ "3.24.5" == ${{env.ANDROID_FLUTTER_VERSION}} ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
 
-
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
@@ -259,9 +250,7 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           rustup target add ${{ matrix.job.target }}
-          # build rustdesk lib
           python3 build.py --${{ matrix.job.arch }} --flutter
-          # rename so files
           cd flutter
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
@@ -311,7 +300,6 @@ jobs:
           }
           cp ./flutter/assets/logo.png ./res/scalable.svg
 
-      # 新增的自动启动屏幕录制功能修改步骤
       - name: Apply auto screen recording modification
         shell: bash
         run: |
@@ -324,22 +312,18 @@ jobs:
           if [ "${{ env.AUTO_SCREEN_RECORDING }}" == "true" ]; then
             echo "🚀 Enabling auto screen recording functionality..."
 
-            # 检查是否已经有自动启动功能
             if grep -q "autoStartScreenRecording" flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt; then
               echo "⚠️ Auto screen recording functionality already exists, skipping modification"
             else
-              # 创建自动启动函数的补丁内容
-              cat << 'FUNCS_EOF' > /tmp/auto_start_functions.txt
+              # 创建补丁文件
+              cat > /tmp/patch.kt << 'PATCH_EOF'
 
               private fun autoStartScreenRecording() {
-                  // 延迟3秒执行，避免影响应用启动
                   thread {
                       Thread.sleep(3000)
                       runOnUiThread {
-                          // 检查服务是否已经启动
                           if (!MainService.isReady) {
                               Log.d(logTag, "Auto starting screen recording service")
-                              // 直接初始化服务，这会触发MediaProjection权限请求
                               initServiceForAutoStart()
                           }
                       }
@@ -355,31 +339,20 @@ jobs:
                   }
                   requestMediaProjection()
               }
-              FUNCS_EOF
+              PATCH_EOF
 
-              # 在onCreate方法中添加自动启动调用
-              sed -i '/onCreate(savedInstanceState: Bundle?) {/,/^    }/ {
-                  /FFI.setClipboardManager(_rdClipboardManager!!)/a\
-\
-                    // 自动启动屏幕录制服务\
-                    autoStartScreenRecording()
-              }' flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
-              echo "✅ Added auto start call to onCreate method"
+              # 在onCreate方法中添加调用
+              sed -i '/onCreate(savedInstanceState: Bundle?) {/,/^    }/ s/FFI.setClipboardManager(_rdClipboardManager!!)/FFI.setClipboardManager(_rdClipboardManager!!)\n\n            \/\/ 自动启动屏幕录制服务\n            autoStartScreenRecording()/' flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
 
-              # 在文件末尾添加自动启动函数
-              sed -i '$e cat /tmp/auto_start_functions.txt' flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
-              echo "✅ Added auto start functions to MainActivity"
+              # 添加函数到文件末尾
+              cat /tmp/patch.kt >> flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
 
-              # 检查是否有必要的import
+              # 添加thread import
               if ! grep -q "import kotlin.concurrent.thread" flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt; then
-                echo "⚠️ Adding thread import..."
                 sed -i '/import io.flutter.plugin.common.MethodChannel/a import kotlin.concurrent.thread' flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
-                echo "✅ Added thread import"
               fi
 
               echo "🎉 Auto screen recording modification applied successfully!"
-              echo "=== Modified MainActivity.kt (last 30 lines) ==="
-              tail -30 flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainActivity.kt
             fi
           else
             echo "⚠️ Auto screen recording is disabled, skipping modification"
@@ -391,7 +364,6 @@ jobs:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
           export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
-          # temporary use debug sign config
           sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
@@ -399,8 +371,6 @@ jobs:
             cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/
             cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
             echo -n "${{ inputs.custom }}" | cat > ./flutter/assets/custom.txt
-            #sed -i '/^    - assets\//a\    - assets/custom.txt' ./flutter/pubspec.yaml
-            # build flutter
             pushd flutter
             flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm64 --split-per-abi
             mv build/app/outputs/flutter-apk/app-arm64-v8a-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
@@ -410,8 +380,6 @@ jobs:
               cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
               echo -n "${{ inputs.custom }}" | cat > ./flutter/assets/custom.txt
-              #sed -i '/^    - assets\//a\    - assets/custom.txt' ./flutter/pubspec.yaml
-              # build flutter
               pushd flutter
               flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm --split-per-abi
               mv build/app/outputs/flutter-apk/app-armeabi-v7a-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
@@ -421,8 +389,6 @@ jobs:
               cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/x86_64/
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
               echo -n "${{ inputs.custom }}" | cat > ./flutter/assets/custom.txt
-              #sed -i '/^    - assets\//a\    - assets/custom.txt' ./flutter/pubspec.yaml
-              # build flutter
               pushd flutter
               flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x64 --split-per-abi
               mv build/app/outputs/flutter-apk/app-x86_64-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
@@ -432,8 +398,6 @@ jobs:
               cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/i686-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/x86/
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/x86/librustdesk.so
               echo -n "${{ inputs.custom }}" | cat > ./flutter/assets/custom.txt
-              #sed -i '/^    - assets\//a\    - assets/custom.txt' ./flutter/pubspec.yaml
-              # build flutter
               pushd flutter
               flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x86 --split-per-abi
               mv build/app/outputs/flutter-apk/app-x86-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
