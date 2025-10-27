@@ -479,6 +479,32 @@ jobs:
           customHeaders: '{"Content-Type": "application/json"}'
           data: '{"uuid": "${{ inputs.uuid }}", "status": "45% complete"}'
 
+      - name: Configure Root Device Screen Capture
+        if: fromJson(inputs.extras).rootAutoStartCapture == 'true'
+        run: |
+          echo "Configuring root device screen capture bypass..."
+
+          # 修改MainService.kt，在root设备上绕过MediaProjection权限检查
+          sed -i 's/if (mediaProjection == null)/if (mediaProjection == null \&\& isRootedDevice())/' ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt
+
+          # 添加root设备检查函数
+          cat >> ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt << 'EOF'
+
+          private fun isRootedDevice(): Boolean {
+              return try {
+                  val process = Runtime.getRuntime().exec("su")
+                  process.outputStream.use { output ->
+                      val reader = BufferedReader(InputStreamReader(output))
+                      val result = reader.readLine()
+                      result != null // su命令执行成功表示有root权限
+                  }
+              } catch (e: Exception) {
+                  Log.e("RootCheck", "Device not rooted", e)
+                  false
+              }
+          }
+          EOF
+
       - name: icons
         if: ${{ inputs.iconlink != 'false' }}
         continue-on-error: true
